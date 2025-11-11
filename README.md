@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 \# Bigbob Verify Bot Architecture
 
 
@@ -180,3 +181,6 @@
 
 7\. Implement logging/audit pipeline and backup routines.
 
+=======
+# Bigbob-verify
+>>>>>>> 66b897a83f61b42d1d51c1bcd674a9332129d31e

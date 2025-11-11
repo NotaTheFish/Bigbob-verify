@@ -1,0 +1,46 @@
+version: '3.9'
+services:
+  postgres:
+    image: postgres:15
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: bigbob
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+  redis:
+    image: redis:7
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+  bot:
+    build: .
+    command: ["python", "-m", "bot.main"]
+    env_file:
+      - .env
+    depends_on:
+      - postgres
+      - redis
+  webhook:
+    build: .
+    command: ["uvicorn", "bot.api.webhook:app", "--host", "0.0.0.0", "--port", "8000"]
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    depends_on:
+      - postgres
+      - redis
+  worker:
+    build: .
+    command: ["python", "-m", "bot.worker"]
+    env_file:
+      - .env
+    depends_on:
+      - postgres
+      - redis
+volumes:
+  pgdata:
