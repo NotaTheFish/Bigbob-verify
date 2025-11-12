@@ -58,7 +58,7 @@ async def verify_callback(
 ) -> dict:
     body = await request.body()
     if not verify_hmac(body, signature):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid signature")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Недопустимая подпись")
 
     event = {
         "type": "verification",
@@ -71,19 +71,19 @@ async def verify_callback(
             await session.commit()
         except IntegrityError:
             await session.rollback()
-            return {"status": "duplicate"}
+            return {"status": "дубликат"}
 
     await enqueue_event(event)
-    return {"status": "queued"}
+    return {"status": "в_очереди"}
 
 
 @app.post("/webhook")
 async def telegram_webhook(request: Request) -> dict:
     application: Application | None = getattr(app.state, "telegram_application", None)
     if application is None:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Bot not ready")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Бот не готов")
 
     data = await request.json()
     update = Update.de_json(data, application.bot)
     await application.process_update(update)
-    return {"status": "ok"}
+    return {"status": "успешно"}

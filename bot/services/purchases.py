@@ -22,10 +22,10 @@ async def create_purchase_request(
 
     item = await session.get(Item, item_id)
     if not item:
-        raise ValueError("Item not found")
+        raise ValueError("Товар не найден")
 
     if item.copies_total is not None and item.copies_sold >= item.copies_total:
-        raise ValueError("Item sold out")
+        raise ValueError("Товар распродан")
 
     request = PurchaseRequest(
         request_id=request_id,

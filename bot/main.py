@@ -60,6 +60,15 @@ MENU_SUPPORT = "Поддержка"
 MENU_ADMIN = "Админ режим"
 
 
+def _plural_ru(value: int, forms: tuple[str, str, str]) -> str:
+    value = abs(value)
+    if value % 10 == 1 and value % 100 != 11:
+        return forms[0]
+    if 2 <= value % 10 <= 4 and not (12 <= value % 100 <= 14):
+        return forms[1]
+    return forms[2]
+
+
 def build_main_keyboard(verified: bool, is_admin: bool) -> ReplyKeyboardMarkup:
     if not verified:
         return ReplyKeyboardMarkup(
@@ -192,7 +201,7 @@ async def ask_nickname(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     context.user_data["verification_code"] = code
     context.user_data["is_verified"] = False
     await update.message.reply_text(
-        "Place this code in your Roblox profile description within 10 minutes and wait for confirmation: "
+        "Добавьте этот код в описание своего Roblox-профиля в течение 10 минут и дождитесь подтверждения: "
         f"`{code}`",
         parse_mode="Markdown",
     )
@@ -201,25 +210,25 @@ async def ask_nickname(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
 
 async def admin_login(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not context.args:
-        await update.message.reply_text("Usage: /admin_login <token>")
+        await update.message.reply_text("Использование: /admin_login <token>")
         return
     token = context.args[0]
     async with session_scope() as session:
         admin = await consume_admin_token(session, token, update.effective_user.id)
         if not admin:
             await session.rollback()
-            await update.message.reply_text("Invalid or unapproved token.")
+            await update.message.reply_text("Токен недействителен или ещё не подтверждён.")
             return
         session.add(
             AdminActionLog(
                 admin_id=admin.admin_id,
                 action_type="admin_login",
                 target=str(update.effective_user.id),
-                details="Onboarding completed",
+                details="Онбординг завершён",
             )
         )
         await session.commit()
-    await update.message.reply_text(f"Welcome, {admin.role.value} admin! Use /admin_menu.")
+    await update.message.reply_text(f"Добро пожаловать, администратор с ролью {admin.role.value}! Введите /admin_menu.")
     context.user_data["admin_verified"] = True
 
 
@@ -227,38 +236,38 @@ async def admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     async with session_scope() as session:
         admin = await enforce_role(session, update.effective_user.id, AdminRole.main, AdminRole.manager, AdminRole.support)
         if not admin:
-            await update.message.reply_text("You are not an active admin.")
+            await update.message.reply_text("У вас нет активного доступа администратора.")
             return
     await update.message.reply_text(
-        "Admin commands:\n"
+        "Команды администратора:\n"
         "- /admin_token <role>\n"
         "- /admin_logs\n"
-        "- /admin_approve <token> (main only)",
+        "- /admin_approve <token> (только для main)",
     )
 
 
 async def admin_token(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not context.args:
-        await update.message.reply_text("Usage: /admin_token <role>")
+        await update.message.reply_text("Использование: /admin_token <role>")
         return
     role = context.args[0]
     if role not in settings.allowed_admin_roles:
-        await update.message.reply_text("Role not allowed.")
+        await update.message.reply_text("Эта роль недоступна.")
         return
     async with session_scope() as session:
         admin = await enforce_role(session, update.effective_user.id, AdminRole.main)
         if not admin:
-            await update.message.reply_text("Only main admin can create tokens.")
+            await update.message.reply_text("Создавать токены может только главный администратор.")
             return
         try:
             requested_role = AdminRole(role)
         except ValueError:
-            await update.message.reply_text("Unknown role.")
+            await update.message.reply_text("Неизвестная роль.")
             return
         token = await create_admin_token(session, admin.admin_id, requested_role)
         await approve_admin_token(session, token.token, admin.admin_id)
         await session.commit()
-    await update.message.reply_text(f"Token created and auto-approved: {token.token}")
+    await update.message.reply_text(f"Токен создан и автоматически подтверждён: {token.token}")
 
 
 async def bigbob_code(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -268,19 +277,19 @@ async def bigbob_code(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
 
     if user.id != settings.root_admin_id:
-        await message.reply_text("Only the root admin can generate access codes.")
+        await message.reply_text("Коды доступа может создавать только главный администратор.")
         return
 
     role_value = context.args[0].lower() if context.args else AdminRole.support.value
     if role_value not in settings.allowed_admin_roles:
         await message.reply_text(
-            "Role not allowed. Available roles: " + ", ".join(settings.allowed_admin_roles)
+            "Эта роль недоступна. Доступные роли: " + ", ".join(settings.allowed_admin_roles)
         )
         return
     try:
         requested_role = AdminRole(role_value)
     except ValueError:
-        await message.reply_text("Unknown role specified.")
+        await message.reply_text("Указана неизвестная роль.")
         return
 
     async with session_scope() as session:
@@ -290,38 +299,43 @@ async def bigbob_code(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await session.commit()
 
     ttl_seconds = settings.admin_token_ttl_seconds
+    if ttl_seconds % 60 == 0:
+        ttl_value = ttl_seconds // 60
+        ttl_unit = _plural_ru(ttl_value, ("минута", "минуты", "минут"))
+    else:
+        ttl_value = ttl_seconds
+        ttl_unit = _plural_ru(ttl_value, ("секунда", "секунды", "секунд"))
     await message.reply_text(
-        "One-time admin code generated:\n"
+        "Сформирован одноразовый админский код:\n"
         f"`{token.token}`\n"
-        f"Valid for {ttl_seconds // 60 if ttl_seconds % 60 == 0 else ttl_seconds} "
-        f"{'minutes' if ttl_seconds % 60 == 0 else 'seconds'}.",
+        f"Действителен {ttl_value} {ttl_unit}.",
         parse_mode="Markdown",
     )
 
 
 async def admin_approve(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not context.args:
-        await update.message.reply_text("Usage: /admin_approve <token>")
+        await update.message.reply_text("Использование: /admin_approve <token>")
         return
     token_value = context.args[0]
     async with session_scope() as session:
         admin = await enforce_role(session, update.effective_user.id, AdminRole.main)
         if not admin:
-            await update.message.reply_text("Only main admin can approve tokens.")
+            await update.message.reply_text("Подтверждать токены может только главный администратор.")
             return
         if not await approve_admin_token(session, token_value, admin.admin_id):
             await session.rollback()
-            await update.message.reply_text("Unable to approve token.")
+            await update.message.reply_text("Не удалось подтвердить токен.")
             return
         await session.commit()
-    await update.message.reply_text("Token approved.")
+    await update.message.reply_text("Токен подтверждён.")
 
 
 async def admin_logs(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     async with session_scope() as session:
         admin = await enforce_role(session, update.effective_user.id, AdminRole.main)
         if not admin:
-            await update.message.reply_text("Only main admin can view logs.")
+            await update.message.reply_text("Просматривать логи может только главный администратор.")
             return
         result = await session.execute(
             select(AdminActionLog).order_by(AdminActionLog.ts.desc()).limit(10)
@@ -330,12 +344,12 @@ async def admin_logs(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     text = "\n".join(
         f"{row.ts.isoformat()} {row.action_type}: {row.details or ''}" for row in rows
     )
-    await update.message.reply_text(text or "No logs available.")
+    await update.message.reply_text(text or "Логи отсутствуют.")
 
 
 async def purchase(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if len(context.args) < 2:
-        await update.message.reply_text("Usage: /buy <item_id> <idempotency_key>")
+        await update.message.reply_text("Использование: /buy <item_id> <idempotency_key>")
         return
     item_id, idempotency_key = context.args[:2]
     request_id = generate_token("REQ")
@@ -349,11 +363,11 @@ async def purchase(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await session.commit()
         except ValueError as exc:
             await session.rollback()
-            await update.message.reply_text(f"Purchase failed: {exc}")
+            await update.message.reply_text(f"Не удалось оформить покупку: {exc}")
             return
     await enqueue_event({"type": "purchase", "request_id": request.request_id})
     await update.message.reply_text(
-        "Purchase request submitted. You will be notified once confirmed."
+        "Запрос на покупку отправлен. Мы уведомим, когда он будет подтверждён."
     )
 
 
@@ -363,18 +377,18 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 
 async def admin_init(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not context.args:
-        await update.message.reply_text("Usage: /admin_init <token>")
+        await update.message.reply_text("Использование: /admin_init <token>")
         return
     token_value = context.args[0]
     if token_value != settings.admin_initial_token:
-        await update.message.reply_text("Invalid bootstrap token.")
+        await update.message.reply_text("Неверный начальный токен.")
         return
     async with session_scope() as session:
         existing_main = await session.scalar(
             select(Admin).where(Admin.role == AdminRole.main, Admin.revoked_at.is_(None))
         )
         if existing_main:
-            await update.message.reply_text("Main admin already initialized.")
+            await update.message.reply_text("Главный администратор уже создан.")
             return
         admin = Admin(telegram_id=update.effective_user.id, role=AdminRole.main)
         session.add(admin)
@@ -384,11 +398,11 @@ async def admin_init(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
                 admin_id=admin.admin_id,
                 action_type="admin_init",
                 target=str(update.effective_user.id),
-                details="Bootstrap main admin",
+                details="Инициализация главного администратора",
             )
         )
         await session.commit()
-    await update.message.reply_text("Bootstrap complete. You are the main admin.")
+    await update.message.reply_text("Инициализация завершена. Вы назначены главным администратором.")
 
 
 async def build_application() -> Application:
