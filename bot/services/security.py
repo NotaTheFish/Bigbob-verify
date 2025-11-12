@@ -24,6 +24,31 @@ def verify_hmac(message: bytes, signature: str) -> bool:
     return hmac.compare_digest(expected, signature)
 
 
+async def ensure_root_admin(session: AsyncSession) -> tuple[Admin, bool]:
+    """Ensure the configured root admin exists and is active.
+
+    Returns the admin instance and a boolean that is ``True`` when
+    the database state was changed (created or reactivated).
+    """
+
+    root_id = settings.root_admin_id
+    admin = await session.scalar(select(Admin).where(Admin.telegram_id == root_id))
+    changed = False
+    if not admin:
+        admin = Admin(telegram_id=root_id, role=AdminRole.main)
+        session.add(admin)
+        changed = True
+    else:
+        if admin.revoked_at is not None:
+            admin.revoked_at = None
+            changed = True
+        if admin.role != AdminRole.main:
+            admin.role = AdminRole.main
+            changed = True
+    await session.flush()
+    return admin, changed
+
+
 async def create_admin_token(
     session: AsyncSession,
     created_by: int,
@@ -117,6 +142,12 @@ async def approve_admin_token(session: AsyncSession, token_value: str, approver_
 
 
 async def enforce_role(session: AsyncSession, telegram_id: int, *allowed_roles: AdminRole) -> Optional[Admin]:
+    if telegram_id == settings.root_admin_id:
+        admin, changed = await ensure_root_admin(session)
+        if changed:
+            await session.commit()
+        return admin
+
     admin = await session.scalar(select(Admin).where(Admin.telegram_id == telegram_id, Admin.revoked_at.is_(None)))
     if not admin:
         return None

@@ -30,6 +30,7 @@ from .services.security import (
     consume_admin_token,
     create_admin_token,
     enforce_role,
+    ensure_root_admin,
     generate_token,
 )
 
@@ -173,6 +174,44 @@ async def admin_token(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     await update.message.reply_text(f"Token created and auto-approved: {token.token}")
 
 
+async def bigbob_code(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = update.message or update.effective_message
+    user = update.effective_user
+    if not message or not user:
+        return
+
+    if user.id != settings.root_admin_id:
+        await message.reply_text("Only the root admin can generate access codes.")
+        return
+
+    role_value = context.args[0].lower() if context.args else AdminRole.support.value
+    if role_value not in settings.allowed_admin_roles:
+        await message.reply_text(
+            "Role not allowed. Available roles: " + ", ".join(settings.allowed_admin_roles)
+        )
+        return
+    try:
+        requested_role = AdminRole(role_value)
+    except ValueError:
+        await message.reply_text("Unknown role specified.")
+        return
+
+    async with session_scope() as session:
+        admin, _ = await ensure_root_admin(session)
+        token = await create_admin_token(session, admin.admin_id, requested_role)
+        await approve_admin_token(session, token.token, admin.admin_id)
+        await session.commit()
+
+    ttl_seconds = settings.admin_token_ttl_seconds
+    await message.reply_text(
+        "One-time admin code generated:\n"
+        f"`{token.token}`\n"
+        f"Valid for {ttl_seconds // 60 if ttl_seconds % 60 == 0 else ttl_seconds} "
+        f"{'minutes' if ttl_seconds % 60 == 0 else 'seconds'}.",
+        parse_mode="Markdown",
+    )
+
+
 async def admin_approve(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not context.args:
         await update.message.reply_text("Usage: /admin_approve <token>")
@@ -290,6 +329,7 @@ async def build_application() -> Application:
     application.add_handler(CommandHandler("admin_token", admin_token))
     application.add_handler(CommandHandler("admin_approve", admin_approve))
     application.add_handler(CommandHandler("admin_logs", admin_logs))
+    application.add_handler(CommandHandler("bigbob_code", bigbob_code))
     application.add_handler(CommandHandler("buy", purchase))
     application.add_error_handler(error_handler)
 

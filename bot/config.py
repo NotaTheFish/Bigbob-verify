@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     redis_url: str = Field(..., alias="REDIS_URL")
     hmac_secret: str = Field(..., alias="HMAC_SECRET")
     admin_initial_token: str = Field(..., alias="ADMIN_INITIAL_TOKEN")
+    root_admin_id: int = Field(5813380332, alias="ROOT_ADMIN_ID")
     sentry_dsn: Optional[str] = Field(None, alias="SENTRY_DSN")
     webhook_base_url: Optional[AnyHttpUrl] = Field(None, alias="WEBHOOK_BASE_URL")
     allowed_admin_roles: List[str] = Field(default_factory=lambda: ["main", "manager", "support"])
