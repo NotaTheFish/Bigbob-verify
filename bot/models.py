@@ -74,7 +74,7 @@ class Verification(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(), default=datetime.utcnow, nullable=False)
 
 
-class Referral(Bas):
+class Referral(Base):
     __tablename__ = "referrals"
 
     id: Mapped[int] = mapped_column(primary_key=True)
