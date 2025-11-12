@@ -6,7 +6,7 @@ import logging
 import secrets
 from datetime import datetime, timedelta
 
-from sqlalchemy import select, update
+from sqlalchemy import select, update as sa_update
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     AIORateLimiter,
@@ -88,7 +88,7 @@ async def ask_nickname(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     expires_at = datetime.utcnow() + timedelta(seconds=settings.verification_code_ttl_seconds)
     async with session_scope() as session:
         await session.execute(
-            update(Verification)
+            sa_update(Verification)
             .where(
                 Verification.telegram_id == update.effective_user.id,
                 Verification.status == VerificationStatus.pending,
