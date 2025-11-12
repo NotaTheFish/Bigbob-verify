@@ -13,7 +13,6 @@ from types import SimpleNamespace
 import pytest
 
 pytest.importorskip("fastapi")
-pytest.importorskip("sqlmodel")
 
 from fastapi.testclient import TestClient
 
@@ -148,7 +147,7 @@ def test_verify_callback(monkeypatch, client_and_stub):
 
     response = client.post("/api/verify-callback", json=payload, headers={"X-Signature": signature})
     assert response.status_code == 200
-    assert response.json()["status"] == "queued"
+    assert response.json()["status"] == "в_очереди"
     assert captured["event"]["type"] == "verification"
 
     assert "evt-1" in EVENT_STORE
@@ -162,6 +161,6 @@ def test_telegram_webhook(client_and_stub):
     response = client.post("/webhook", json=update_payload)
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    assert response.json() == {"status": "успешно"}
     assert stub.processed_updates
     assert stub.processed_updates[-1].data == update_payload

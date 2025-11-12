@@ -4,9 +4,9 @@ from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
-from sqlmodel import SQLModel
 
 from .config import get_settings
+from .models import Base
 
 _settings = get_settings()
 _engine: AsyncEngine | None = None
@@ -20,7 +20,11 @@ def configure_engine(db_url: str | None = None) -> None:
     _async_session = async_sessionmaker(_engine, expire_on_commit=False, class_=AsyncSession)
 
 
-configure_engine()
+try:
+    configure_engine()
+except ModuleNotFoundError as exc:  # pragma: no cover - optional dependency handling
+    if exc.name != "aiosqlite":
+        raise
 
 
 @asynccontextmanager
@@ -36,7 +40,7 @@ async def session_scope() -> AsyncGenerator[AsyncSession, None]:
 async def init_db() -> None:
     assert _engine is not None
     async with _engine.begin() as conn:
-        await conn.run_sync(SQLModel.metadata.create_all)
+        await conn.run_sync(Base.metadata.create_all)
 
 
 def get_engine() -> AsyncEngine:

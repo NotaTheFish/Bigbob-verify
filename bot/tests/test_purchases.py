@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
-pytest.importorskip("sqlmodel")
+pytest.importorskip("aiosqlite")
 
 os.environ.setdefault("TELEGRAM_BOT_TOKEN", "test-token")
 os.environ.setdefault("DB_URL", "sqlite+aiosqlite:///./test.db")

@@ -4,9 +4,9 @@ import asyncio
 import os
 
 import pytest
+from sqlalchemy import select
 
-pytest.importorskip("sqlmodel")
-from sqlmodel import select
+pytest.importorskip("aiosqlite")
 
 os.environ.setdefault("TELEGRAM_BOT_TOKEN", "test-token")
 os.environ.setdefault("DB_URL", "sqlite+aiosqlite:///./test.db")

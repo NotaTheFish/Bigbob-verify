@@ -4,8 +4,8 @@ import enum
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import UniqueConstraint
-from sqlmodel import Field, Relationship, SQLModel
+from sqlalchemy import DateTime, Enum as SAEnum, ForeignKey, String, UniqueConstraint
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
 class VerificationStatus(str, enum.Enum):
@@ -32,53 +32,57 @@ class AdminRole(str, enum.Enum):
     support = "support"
 
 
-class User(SQLModel, table=True):
+class Base(DeclarativeBase):
+    pass
+
+
+class User(Base):
     __tablename__ = "users"
 
-    id: Optional[int] = Field(default=None, primary_key=True)
-    telegram_id: int = Field(index=True, unique=True)
-    roblox_id: Optional[int] = Field(default=None, index=True, unique=True)
-    username: Optional[str] = Field(default=None, max_length=255)
-    verified_at: Optional[datetime] = Field(default=None)
-    invited_by: Optional[int] = Field(default=None, foreign_key="users.id")
-    created_at: datetime = Field(default_factory=datetime.utcnow, nullable=False)
-    last_active: datetime = Field(default_factory=datetime.utcnow, nullable=False)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    telegram_id: Mapped[int] = mapped_column(index=True, unique=True)
+    roblox_id: Mapped[Optional[int]] = mapped_column(index=True, unique=True, nullable=True)
+    username: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    verified_at: Mapped[Optional[datetime]] = mapped_column(DateTime(), nullable=Tru)
+    invited_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(), default=datetime.utcnow, nullable=False)
+    last_active: Mapped[datetime] = mapped_column(DateTime(), default=datetime.utcnow, nullable=False)
 
-    balance: Optional["Balance"] = Relationship(back_populates="user")
+    balance: Mapped[Optional["Balance"]] = relationship(back_populates="user", uselist=False)
 
 
-class Balance(SQLModel, table=True):
+class Balance(Base):
     __tablename__ = "balances"
 
-    user_id: int = Field(foreign_key="users.id", primary_key=True)
-    nuts_balance: int = Field(default=0, nullable=False)
-    reserved_balance: int = Field(default=0, nullable=False)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    nuts_balance: Mapped[int] = mapped_column(default=0, nullable=False)
+    reserved_balance: Mapped[int] = mapped_column(default=0, nullable=False)
 
-    user: Optional["User"] = Relationship(back_populates="balance")
+    user: Mapped["User"] = relationship(back_populates="balance")
 
 
-class Verification(SQLModel, table=True):
+class Verification(Base):
     __tablename__ = "verifications"
     __table_args__ = (UniqueConstraint("telegram_id", "status", name="uq_verification_active"),)
 
-    id: Optional[int] = Field(default=None, primary_key=True)
-    telegram_id: int = Field(index=True, nullable=False)
-    roblox_nick: str = Field(nullable=False, max_length=255)
-    code: str = Field(nullable=False, max_length=32, index=True)
-    status: VerificationStatus = Field(default=VerificationStatus.pending)
-    expires_at: datetime = Field(nullable=False)
-    created_at: datetime = Field(default_factory=datetime.utcnow, nullable=False)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    telegram_id: Mapped[int] = mapped_column(index=True, nullable=False)
+    roblox_nick: Mapped[str] = mapped_column(String(255), nullable=False)
+    code: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    status: Mapped[VerificationStatus] = mapped_column(SAEnum(VerificationStatus), default=VerificationStatus.pending)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(), default=datetime.utcnow, nullable=False)
 
 
-class Referral(SQLModel, table=True):
+class Referral(Bas):
     __tablename__ = "referrals"
 
-    id: Optional[int] = Field(default=None, primary_key=True)
-    referrer_id: int = Field(foreign_key="users.id", nullable=False)
-    referred_id: int = Field(foreign_key="users.id", nullable=False)
-    reward_amount: int = Field(default=0, nullable=False)
-    status: ReferralStatus = Field(default=ReferralStatus.pending)
-    created_at: datetime = Field(default_factory=datetime.utcnow, nullable=False)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    referrer_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    referred_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    reward_amount: Mapped[int] = mapped_column(default=0, nullable=False)
+    status: Mapped[ReferralStatus] = mapped_column(SAEnum(ReferralStatus), default=ReferralStatus.pending)
+    created_at: Mapped[datetime] = mapped_column(DateTime(), default=datetime.utcnow, nullable=False)
 
 
 class PromoCodeType(str, enum.Enum):
@@ -86,81 +90,81 @@ class PromoCodeType(str, enum.Enum):
     privilege = "privilege"
 
 
-class PromoCode(SQLModel, table=True):
+class PromoCode(Base):
     __tablename__ = "promo_codes"
 
-    code: str = Field(primary_key=True)
-    type: PromoCodeType = Field(nullable=False)
-    value: int = Field(nullable=False)
-    activations_left: int = Field(default=0)
-    expires_at: Optional[datetime] = Field(default=None)
-    creator_admin_id: Optional[int] = Field(default=None, foreign_key="admins.admin_id")
+    code: Mapped[str] = mapped_column(primary_key=True)
+    type: Mapped[PromoCodeType] = mapped_column(SAEnum(PromoCodeType), nullable=False)
+    value: Mapped[int] = mapped_column(nullable=False)
+    activations_left: Mapped[int] = mapped_column(default=0)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(), nullable=True)
+    creator_admin_id: Mapped[Optional[int]] = mapped_column(ForeignKey("admins.admin_id"), nullable=True)
 
 
-class Item(SQLModel, table=True):
+class Item(Base):
     __tablename__ = "items"
 
-    item_id: str = Field(primary_key=True)
-    name: str = Field(nullable=False)
-    description: Optional[str] = Field(default=None)
-    copies_total: Optional[int] = Field(default=None)
-    copies_sold: int = Field(default=0)
-    creator_admin: Optional[int] = Field(default=None, foreign_key="admins.admin_id")
+    item_id: Mapped[str] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(String, nullable=Tru)
+    copies_total: Mapped[Optional[int]] = mapped_column(nullable=True)
+    copies_sold: Mapped[int] = mapped_column(default=0)
+    creator_admin: Mapped[Optional[int]] = mapped_column(ForeignKey("admins.admin_id"), nullable=True)
 
 
-class PurchaseRequest(SQLModel, table=True):
+class PurchaseRequest(Base):
     __tablename__ = "purchase_requests"
 
-    request_id: str = Field(primary_key=True)
-    user_id: int = Field(foreign_key="users.id", nullable=False)
-    item_id: str = Field(foreign_key="items.item_id", nullable=False)
-    status: PurchaseStatus = Field(default=PurchaseStatus.pending)
-    idempotency_key: str = Field(nullable=False, unique=True, index=True)
-    created_at: datetime = Field(default_factory=datetime.utcnow, nullable=False)
-    completed_at: Optional[datetime] = Field(default=None)
+    request_id: Mapped[str] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    item_id: Mapped[str] = mapped_column(ForeignKey("items.item_id"), nullable=False)
+    status: Mapped[PurchaseStatus] = mapped_column(SAEnum(PurchaseStatus), default=PurchaseStatus.pending)
+    idempotency_key: Mapped[str] = mapped_column(nullable=False, unique=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(), default=datetime.utcnow, nullable=False)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(), nullable=True)
 
 
-class Admin(SQLModel, table=True):
+class Admin(Base):
     __tablename__ = "admins"
 
-    admin_id: Optional[int] = Field(default=None, primary_key=True)
-    telegram_id: int = Field(unique=True, nullable=False)
-    role: AdminRole = Field(nullable=False)
-    granted_by: Optional[int] = Field(default=None, foreign_key="admins.admin_id")
-    granted_at: datetime = Field(default_factory=datetime.utcnow)
-    revoked_at: Optional[datetime] = Field(default=None)
+    admin_id: Mapped[int] = mapped_column(primary_key=True)
+    telegram_id: Mapped[int] = mapped_column(unique=True, nullable=False)
+    role: Mapped[AdminRole] = mapped_column(SAEnum(AdminRole), nullable=False)
+    granted_by: Mapped[Optional[int]] = mapped_column(ForeignKey("admins.admin_id"), nullable=True)
+    granted_at: Mapped[datetime] = mapped_column(DateTime(), default=datetime.utcnow)
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(), nullable=True)
 
 
-class AdminToken(SQLModel, table=True):
+class AdminToken(Base):
     __tablename__ = "admin_tokens"
 
-    id: Optional[int] = Field(default=None, primary_key=True)
-    token: str = Field(unique=True, nullable=False, index=True)
-    role_requested: AdminRole = Field(nullable=False)
-    created_by: int = Field(foreign_key="admins.admin_id")
-    approved_by: Optional[int] = Field(default=None, foreign_key="admins.admin_id")
-    approved_at: Optional[datetime] = Field(default=None)
-    consumed_by: Optional[int] = Field(default=None, foreign_key="admins.admin_id")
-    consumed_at: Optional[datetime] = Field(default=None)
-    expires_at: datetime = Field(nullable=False)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    token: Mapped[str] = mapped_column(unique=True, nullable=False, index=True)
+    role_requested: Mapped[AdminRole] = mapped_column(SAEnum(AdminRole), nullable=False)
+    created_by: Mapped[int] = mapped_column(ForeignKey("admins.admin_id"))
+    approved_by: Mapped[Optional[int]] = mapped_column(ForeignKey("admins.admin_id"), nullable=True)
+    approved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(), nullable=True)
+    consumed_by: Mapped[Optional[int]] = mapped_column(ForeignKey("admins.admin_id"), nullable=True)
+    consumed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(), nullable=Tru)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(), nullable=False)
 
 
-class AdminActionLog(SQLModel, table=True):
+class AdminActionLog(Base):
     __tablename__ = "admin_actions_log"
 
-    action_id: Optional[int] = Field(default=None, primary_key=True)
-    admin_id: Optional[int] = Field(default=None, foreign_key="admins.admin_id")
-    action_type: str = Field(nullable=False)
-    target: Optional[str] = Field(default=None)
-    details: Optional[str] = Field(default=None)
-    ts: datetime = Field(default_factory=datetime.utcnow)
+    action_id: Mapped[int] = mapped_column(primary_key=True)
+    admin_id: Mapped[Optional[int]] = mapped_column(ForeignKey("admins.admin_id"), nullable=True)
+    action_type: Mapped[str] = mapped_column(nullable=False)
+    target: Mapped[Optional[str]] = mapped_column(nullable=True)
+    details: Mapped[Optional[str]] = mapped_column(nullable=True)
+    ts: Mapped[datetime] = mapped_column(DateTime(), default=datetime.utcnow)
 
 
-class EventQueue(SQLModel, table=True):
+class EventQueue(Base):
     __tablename__ = "events_queue"
 
-    id: Optional[int] = Field(default=None, primary_key=True)
-    event_id: str = Field(nullable=False, unique=True)
-    payload: str = Field(nullable=False)
-    enqueued_at: datetime = Field(default_factory=datetime.utcnow)
-    processed_at: Optional[datetime] = Field(default=None)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    event_id: Mapped[str] = mapped_column(nullable=False, unique=True)
+    payload: Mapped[str] = mapped_column(nullable=False)
+    enqueued_at: Mapped[datetime] = mapped_column(DateTime(), default=datetime.utcnow)
+    processed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(), nullable=True)
