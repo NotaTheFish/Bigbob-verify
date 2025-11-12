@@ -106,7 +106,7 @@ class Item(Base):
 
     item_id: Mapped[str] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(nullable=False)
-    description: Mapped[Optional[str]] = mapped_column(String, nullable=Tru)
+    description: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     copies_total: Mapped[Optional[int]] = mapped_column(nullable=True)
     copies_sold: Mapped[int] = mapped_column(default=0)
     creator_admin: Mapped[Optional[int]] = mapped_column(ForeignKey("admins.admin_id"), nullable=True)
