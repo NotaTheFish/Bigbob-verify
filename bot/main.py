@@ -7,12 +7,16 @@ import secrets
 from datetime import datetime, timedelta
 
 from sqlalchemy import select, update as sa_update
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import (
+    KeyboardButton,
+    ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
+    Update,
+)
 from telegram.ext import (
     AIORateLimiter,
     Application,
     ApplicationBuilder,
-    CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
     ConversationHandler,
@@ -22,7 +26,15 @@ from telegram.ext import (
 
 from .config import get_settings
 from .db import init_db, session_scope
-from .models import Admin, AdminActionLog, AdminRole, EventQueue, Verification, VerificationStatus
+from .models import (
+    Admin,
+    AdminActionLog,
+    AdminRole,
+    EventQueue,
+    User,
+    Verification,
+    VerificationStatus,
+)
 from .services.purchases import create_purchase_request
 from .services.queue import enqueue_event
 from .services.security import (
@@ -41,45 +53,118 @@ settings = get_settings()
 
 ASK_NICK = 0
 
+MENU_VERIFICATION = "Верификация"
+MENU_SHOP = "Магазин"
+MENU_PROFILE = "Профиль"
+MENU_SUPPORT = "Поддержка"
+MENU_ADMIN = "Админ режим"
 
-def main_menu_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        [
-            [InlineKeyboardButton("Verification", callback_data="verification")],
-            [InlineKeyboardButton("Shop", callback_data="shop")],
-            [InlineKeyboardButton("Profile", callback_data="profile")],
-            [InlineKeyboardButton("Support", callback_data="support")],
-            [InlineKeyboardButton("Admin", callback_data="admin")],
-        ]
+
+def build_main_keyboard(verified: bool, is_admin: bool) -> ReplyKeyboardMarkup:
+    if not verified:
+        return ReplyKeyboardMarkup(
+            [[KeyboardButton(MENU_VERIFICATION)]],
+            resize_keyboard=True,
+            one_time_keyboard=False,
+        )
+
+    buttons = [
+        [KeyboardButton(MENU_SHOP), KeyboardButton(MENU_PROFILE)],
+        [KeyboardButton(MENU_SUPPORT)],
+    ]
+    if is_admin:
+        buttons.append([KeyboardButton(MENU_ADMIN)])
+    return ReplyKeyboardMarkup(buttons, resize_keyboard=True, one_time_keyboard=False)
+
+
+async def _load_user(telegram_id: int) -> tuple[bool, User | None]:
+    async with session_scope() as session:
+        user = await session.scalar(select(User).where(User.telegram_id == telegram_id))
+    return bool(user and user.verified_at), user
+
+
+def _verification_instruction() -> str:
+    return (
+        "Привет! Мы ещё не подтвердили твою верификацию.\n"
+        "Напиши свой Roblox-ник в следующем сообщении, чтобы получить код подтверждения.\n"
+        "После этого добавь выданный код в описание своего Roblox-профиля и дождись проверки."
     )
 
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     message = update.message or update.effective_message
-    if not message:
-        return
+    user = update.effective_user
+    if not message or not user:
+        return ConversationHandler.END
+
+    verified, _ = await _load_user(user.id)
+    context.user_data["is_verified"] = verified
+    is_admin = context.user_data.get("admin_verified", False)
+
+    if verified:
+        await message.reply_text(
+            "С возвращением в Bigbob! Выберите действие ниже.",
+            reply_markup=build_main_keyboard(True, is_admin),
+        )
+        return ConversationHandler.END
+
     await message.reply_text(
-        "Welcome to Bigbob! Choose an option below.",
-        reply_markup=main_menu_keyboard(),
+        _verification_instruction(), reply_markup=ReplyKeyboardRemove()
     )
+    return ASK_NICK
 
 
-async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    query = update.callback_query
-    await query.answer()
-    data = query.data
-    if data == "verification":
-        await query.edit_message_text("Please send your Roblox nickname.")
-        return ASK_NICK
-    if data == "shop":
-        await query.edit_message_text("Shop is under construction. Use /start to return.")
-    elif data == "profile":
-        await query.edit_message_text("Profile view coming soon. We'll show balances and referral link.")
-    elif data == "support":
-        await query.edit_message_text("Support: Contact @BigbobSupport or use /start to go back.")
-    elif data == "admin":
-        await query.edit_message_text("Send /admin_login <token> to begin onboarding.")
-    return ConversationHandler.END
+async def start_verification(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    message = update.message or update.effective_message
+    user = update.effective_user
+    if not message or not user:
+        return ConversationHandler.END
+
+    verified = context.user_data.get("is_verified")
+    if verified is None:
+        verified, _ = await _load_user(user.id)
+        context.user_data["is_verified"] = verified
+
+    if verified:
+        await message.reply_text(
+            "Вы уже прошли верификацию.",
+            reply_markup=build_main_keyboard(True, context.user_data.get("admin_verified", False)),
+        )
+        return ConversationHandler.END
+
+    await message.reply_text(
+        _verification_instruction(), reply_markup=ReplyKeyboardRemove()
+    )
+    return ASK_NICK
+
+
+async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = update.message
+    if not message or not message.text:
+        return
+
+    selection = message.text.strip()
+    user = update.effective_user
+    verified = context.user_data.get("is_verified")
+    if verified is None and user:
+        verified, _ = await _load_user(user.id)
+        context.user_data["is_verified"] = verified
+
+    if selection == MENU_SHOP:
+        await message.reply_text("Магазин пока в разработке. Используйте /start для возврата.")
+    elif selection == MENU_PROFILE:
+        await message.reply_text(
+            "Раздел профиля появится позже. Мы покажем баланс и реферальную ссылку."
+        )
+    elif selection == MENU_SUPPORT:
+        await message.reply_text("Поддержка: напишите @BigbobSupport или используйте /start.")
+    elif selection == MENU_ADMIN:
+        if context.user_data.get("admin_verified"):
+            await admin_menu(update, context)
+        else:
+            await message.reply_text("Для доступа к админ-режиму используйте /admin_login <token>.")
+    elif selection == MENU_VERIFICATION:
+        await start_verification(update, context)
 
 
 async def ask_nickname(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -105,6 +190,7 @@ async def ask_nickname(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         session.add(verification)
         await session.commit()
     context.user_data["verification_code"] = code
+    context.user_data["is_verified"] = False
     await update.message.reply_text(
         "Place this code in your Roblox profile description within 10 minutes and wait for confirmation: "
         f"`{code}`",
@@ -134,6 +220,7 @@ async def admin_login(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         )
         await session.commit()
     await update.message.reply_text(f"Welcome, {admin.role.value} admin! Use /admin_menu.")
+    context.user_data["admin_verified"] = True
 
 
 async def admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -314,14 +401,16 @@ async def build_application() -> Application:
     )
 
     conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(handle_callback)],
+        entry_points=[
+            CommandHandler("start", start),
+            MessageHandler(filters.Regex(f"^{MENU_VERIFICATION}$"), start_verification),
+        ],
         states={
             ASK_NICK: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_nickname)],
         },
         fallbacks=[CommandHandler("start", start)],
     )
 
-    application.add_handler(CommandHandler("start", start))
     application.add_handler(conv)
     application.add_handler(CommandHandler("admin_login", admin_login))
     application.add_handler(CommandHandler("admin_init", admin_init))
@@ -331,6 +420,9 @@ async def build_application() -> Application:
     application.add_handler(CommandHandler("admin_logs", admin_logs))
     application.add_handler(CommandHandler("bigbob_code", bigbob_code))
     application.add_handler(CommandHandler("buy", purchase))
+    application.add_handler(
+        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_menu_selection)
+    )
     application.add_error_handler(error_handler)
 
     return application
