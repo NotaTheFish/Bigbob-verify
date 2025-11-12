@@ -118,7 +118,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         return ConversationHandler.END
 
     await message.reply_text(
-        _verification_instruction(), reply_markup=ReplyKeyboardRemove()
+        _verification_instruction(),
+        reply_markup=build_main_keyboard(False, is_admin),
     )
     return ASK_NICK
 
@@ -142,7 +143,10 @@ async def start_verification(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return ConversationHandler.END
 
     await message.reply_text(
-        _verification_instruction(), reply_markup=ReplyKeyboardRemove()
+        _verification_instruction(),
+        reply_markup=build_main_keyboard(
+            False, context.user_data.get("admin_verified", False)
+        ),
     )
     return ASK_NICK
 
