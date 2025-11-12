@@ -5,8 +5,7 @@ from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import UniqueConstraint
-from sqlalchemy.orm import Mapped, relationship
-from sqlmodel import Field, SQLModel
+from sqlmodel import Field, Relationship, SQLModel
 
 
 class VerificationStatus(str, enum.Enum):
@@ -45,7 +44,7 @@ class User(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow, nullable=False)
     last_active: datetime = Field(default_factory=datetime.utcnow, nullable=False)
 
-    balance: Mapped[Optional["Balance"]] = relationship(back_populates="user")
+    balance: Optional["Balance"] = Relationship(back_populates="user")
 
 
 class Balance(SQLModel, table=True):
@@ -55,7 +54,7 @@ class Balance(SQLModel, table=True):
     nuts_balance: int = Field(default=0, nullable=False)
     reserved_balance: int = Field(default=0, nullable=False)
 
-    user: Mapped["User"] = relationship(back_populates="balance")
+    user: Optional["User"] = Relationship(back_populates="balance")
 
 
 class Verification(SQLModel, table=True):
