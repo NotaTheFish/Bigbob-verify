@@ -145,7 +145,7 @@ class AdminToken(Base):
     approved_by: Mapped[Optional[int]] = mapped_column(ForeignKey("admins.admin_id"), nullable=True)
     approved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(), nullable=True)
     consumed_by: Mapped[Optional[int]] = mapped_column(ForeignKey("admins.admin_id"), nullable=True)
-    consumed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(), nullable=Tru)
+    consumed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(), nullable=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(), nullable=False)
 
 
