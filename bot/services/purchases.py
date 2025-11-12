@@ -38,7 +38,7 @@ async def create_purchase_request(
 
     session.add(
         AdminActionLog(
-            admin_id=0,
+            admin_id=None,
             action_type="purchase_request_created",
             target=str(request.request_id),
             details=f"user={user_id},item={item_id}",
@@ -77,7 +77,7 @@ async def confirm_purchase(session: AsyncSession, request_id: str) -> Optional[P
 
     session.add(
         AdminActionLog(
-            admin_id=0,
+            admin_id=None,
             action_type="purchase_confirmed",
             target=request.request_id,
             details=f"user={request.user_id},item={request.item_id}",
@@ -98,7 +98,7 @@ async def cancel_purchase(session: AsyncSession, request_id: str, reason: str) -
 
     session.add(
         AdminActionLog(
-            admin_id=0,
+            admin_id=None,
             action_type="purchase_cancelled",
             target=request.request_id,
             details=reason,
