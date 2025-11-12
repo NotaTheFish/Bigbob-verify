@@ -43,7 +43,7 @@ class User(Base):
     telegram_id: Mapped[int] = mapped_column(index=True, unique=True)
     roblox_id: Mapped[Optional[int]] = mapped_column(index=True, unique=True, nullable=True)
     username: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    verified_at: Mapped[Optional[datetime]] = mapped_column(DateTime(), nullable=Tru)
+    verified_at: Mapped[Optional[datetime]] = mapped_column(DateTime(), nullable=True)
     invited_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(), default=datetime.utcnow, nullable=False)
     last_active: Mapped[datetime] = mapped_column(DateTime(), default=datetime.utcnow, nullable=False)
