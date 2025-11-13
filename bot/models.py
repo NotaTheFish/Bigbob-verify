@@ -66,7 +66,7 @@ class Verification(Base):
     __table_args__ = (UniqueConstraint("telegram_id", "status", name="uq_verification_active"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    telegram_id: Mapped[int] = mapped_column(index=True, nullable=False)
+    telegram_id: Mapped[int] = mapped_column(BigInteger, index=True, nullable=False)
     roblox_nick: Mapped[str] = mapped_column(String(255), nullable=False)
     code: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     status: Mapped[VerificationStatus] = mapped_column(SAEnum(VerificationStatus), default=VerificationStatus.pending)

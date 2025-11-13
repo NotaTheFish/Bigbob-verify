@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime, timedelta
 
 import pytest
+from sqlalchemy import select
 
 pytest.importorskip("aiosqlite")
 
@@ -13,7 +15,8 @@ os.environ.setdefault("HMAC_SECRET", "secret")
 os.environ.setdefault("ADMIN_INITIAL_TOKEN", "init")
 
 from bot.db import configure_engine, init_db, session_scope  # noqa: E402
-from bot.models import User  # noqa: E402
+from bot.models import User, Verification, VerificationStatus  # noqa: E402
+from bot.worker import handle_verification  # noqa: E402
 
 
 @pytest.mark.asyncio
@@ -35,3 +38,41 @@ async def test_user_creation_supports_large_telegram_ids(tmp_path) -> None:
         stored = await session.get(User, user_id)
         assert stored is not None
         assert stored.telegram_id == large_telegram_id
+
+
+@pytest.mark.asyncio
+async def test_verification_flow_supports_large_telegram_ids(tmp_path) -> None:
+    db_url = f"sqlite+aiosqlite:///{tmp_path/'verifications.db'}"
+    os.environ["DB_URL"] = db_url
+    configure_engine(db_url)
+    await init_db()
+
+    large_telegram_id = 6_000_000_000
+    verification_code = "BIGVERIF"
+    roblox_player_id = 987_654_321
+
+    async with session_scope() as session:
+        verification = Verification(
+            telegram_id=large_telegram_id,
+            roblox_nick="BigNick",
+            code=verification_code,
+            status=VerificationStatus.pending,
+            expires_at=datetime.utcnow() + timedelta(minutes=5),
+            created_at=datetime.utcnow(),
+        )
+        session.add(verification)
+        await session.commit()
+
+    await handle_verification({"code": verification_code, "playerId": roblox_player_id})
+
+    async with session_scope() as session:
+        stored_verification = await session.scalar(
+            select(Verification).where(Verification.code == verification_code)
+        )
+        stored_user = await session.scalar(select(User).where(User.telegram_id == large_telegram_id))
+
+        assert stored_verification is not None
+        assert stored_verification.status == VerificationStatus.used
+        assert stored_user is not None
+        assert stored_user.telegram_id == large_telegram_id
+        assert stored_user.roblox_id == roblox_player_id
