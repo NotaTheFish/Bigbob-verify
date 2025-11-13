@@ -179,7 +179,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         _verification_instruction(),
         reply_markup=build_main_keyboard(False, is_admin),
     )
-    return ASK_NICK
+    return ConversationHandler.END
 
 
 async def start_verification(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -209,6 +209,21 @@ async def start_verification(update: Update, context: ContextTypes.DEFAULT_TYPE)
         ),
     )
     return ASK_NICK
+
+
+async def cancel_verification(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    message = update.message or update.effective_message
+    _clear_pending_nickname(context)
+    if message:
+        verified = bool(context.user_data.get("is_verified"))
+        await message.reply_text(
+            "Верификация отменена. Используйте /start, чтобы вернуться к главному меню.",
+            reply_markup=build_main_keyboard(
+                verified,
+                context.user_data.get("admin_verified", False),
+            ),
+        )
+    return ConversationHandler.END
 
 
 async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -241,8 +256,6 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
             await admin_menu(update, context)
         else:
             await message.reply_text("Для доступа к админ-режиму используйте /admin_login <token>.")
-    elif selection == MENU_VERIFICATION:
-        await start_verification(update, context)
 
 
 async def _issue_verification_code(
@@ -654,7 +667,7 @@ async def build_application() -> Application:
 
     conv = ConversationHandler(
         entry_points=[
-            CommandHandler("start", start),
+            CommandHandler("verify", start_verification),
             MessageHandler(filters.Regex(f"^{MENU_VERIFICATION}$"), start_verification),
         ],
         states={
@@ -669,11 +682,13 @@ async def build_application() -> Application:
                 CallbackQueryHandler(verification_timeout),
             ],
         },
-        fallbacks=[CommandHandler("start", start)],
+        fallbacks=[CommandHandler("cancel", cancel_verification)],
         conversation_timeout=VERIFICATION_CONVERSATION_TIMEOUT,
     )
 
+    application.add_handler(CommandHandler("start", start))
     application.add_handler(conv)
+    application.add_handler(CommandHandler("cancel", cancel_verification))
     application.add_handler(
         CallbackQueryHandler(
             check_verification_status, pattern=f"^{VERIFICATION_CHECK_CALLBACK}$"
