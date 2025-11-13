@@ -8,6 +8,8 @@ from datetime import datetime, timedelta
 
 from sqlalchemy import select, update as sa_update
 from telegram import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
     KeyboardButton,
     ReplyKeyboardMarkup,
     ReplyKeyboardRemove,
@@ -17,6 +19,7 @@ from telegram.ext import (
     AIORateLimiter,
     Application,
     ApplicationBuilder,
+    CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
     ConversationHandler,
@@ -51,7 +54,9 @@ logger = logging.getLogger(__name__)
 
 settings = get_settings()
 
-ASK_NICK = 0
+ASK_NICK, CONFIRM_NICK = range(2)
+
+VERIFICATION_CONVERSATION_TIMEOUT = 120
 
 MENU_VERIFICATION = "Верификация"
 MENU_SHOP = "Магазин"
@@ -102,6 +107,10 @@ def _cache_user_state(
     context.user_data["ban_reason"] = user.ban_reason if user and user.ban_reason else None
 
 
+def _clear_pending_nickname(context: ContextTypes.DEFAULT_TYPE) -> None:
+    context.user_data.pop("pending_nickname", None)
+
+
 async def _ensure_user_state(
     context: ContextTypes.DEFAULT_TYPE, telegram_id: int
 ) -> tuple[bool, bool, str | None]:
@@ -143,6 +152,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not message or not user:
         return ConversationHandler.END
 
+    _clear_pending_nickname(context)
     verified, is_banned, user_record = await _load_user(user.id)
     _cache_user_state(context, verified, is_banned, user_record)
     is_admin = context.user_data.get("admin_verified", False)
@@ -171,6 +181,7 @@ async def start_verification(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not message or not user:
         return ConversationHandler.END
 
+    _clear_pending_nickname(context)
     verified, is_banned, ban_reason = await _ensure_user_state(context, user.id)
 
     if is_banned:
@@ -227,6 +238,43 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         await start_verification(update, context)
 
 
+async def _issue_verification_code(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, nickname: str
+) -> None:
+    user = update.effective_user
+    message = update.effective_message
+    if not user or not message:
+        return
+
+    code = f"BB-{secrets.token_hex(3)}"
+    expires_at = datetime.utcnow() + timedelta(seconds=settings.verification_code_ttl_seconds)
+    async with session_scope() as session:
+        await session.execute(
+            sa_update(Verification)
+            .where(
+                Verification.telegram_id == user.id,
+                Verification.status == VerificationStatus.pending,
+            )
+            .values(status=VerificationStatus.expired)
+        )
+        verification = Verification(
+            telegram_id=user.id,
+            roblox_nick=nickname,
+            code=code,
+            status=VerificationStatus.pending,
+            expires_at=expires_at,
+        )
+        session.add(verification)
+        await session.commit()
+    context.user_data["verification_code"] = code
+    context.user_data["is_verified"] = False
+    await message.reply_text(
+        "Добавьте этот код в описание своего Roblox-профиля в течение 10 минут и дождитесь подтверждения: "
+        f"`{code}`",
+        parse_mode="Markdown",
+    )
+
+
 async def ask_nickname(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     message = update.message
     user = update.effective_user
@@ -244,33 +292,57 @@ async def ask_nickname(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         return ConversationHandler.END
 
     nickname = message.text.strip()
-    code = f"BB-{secrets.token_hex(3)}"
-    expires_at = datetime.utcnow() + timedelta(seconds=settings.verification_code_ttl_seconds)
-    async with session_scope() as session:
-        await session.execute(
-            sa_update(Verification)
-            .where(
-                Verification.telegram_id == update.effective_user.id,
-                Verification.status == VerificationStatus.pending,
-            )
-            .values(status=VerificationStatus.expired)
-        )
-        verification = Verification(
-            telegram_id=update.effective_user.id,
-            roblox_nick=nickname,
-            code=code,
-            status=VerificationStatus.pending,
-            expires_at=expires_at,
-        )
-        session.add(verification)
-        await session.commit()
-    context.user_data["verification_code"] = code
-    context.user_data["is_verified"] = False
-    await message.reply_text(
-        "Добавьте этот код в описание своего Roblox-профиля в течение 10 минут и дождитесь подтверждения: "
-        f"`{code}`",
-        parse_mode="Markdown",
+    context.user_data["pending_nickname"] = nickname
+    keyboard = InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("Да", callback_data="confirm_nick_yes"),
+                InlineKeyboardButton("Нет", callback_data="confirm_nick_no"),
+            ]
+        ]
     )
+    await message.reply_text(
+        f"Ты указал Roblox-ник <b>{nickname}</b>. Всё верно?",
+        parse_mode="HTML",
+        reply_markup=keyboard,
+    )
+    return CONFIRM_NICK
+
+
+async def confirm_nickname(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    if not query:
+        return ConversationHandler.END
+
+    await query.answer()
+    data = query.data or ""
+    if data == "confirm_nick_yes":
+        nickname = context.user_data.get("pending_nickname")
+        if not nickname:
+            await query.edit_message_text(
+                "Не удалось определить ник. Пожалуйста, отправьте его ещё раз."
+            )
+            return ASK_NICK
+        await query.edit_message_reply_markup(reply_markup=None)
+        await _issue_verification_code(update, context, nickname)
+        _clear_pending_nickname(context)
+        return ConversationHandler.END
+
+    if data == "confirm_nick_no":
+        _clear_pending_nickname(context)
+        await query.edit_message_text("Хорошо, отправьте правильный Roblox-ник.")
+        if query.message:
+            await query.message.reply_text("Напишите свой Roblox-ник ещё раз.")
+        return ASK_NICK
+
+    return ConversationHandler.END
+
+
+async def verification_timeout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    _clear_pending_nickname(context)
+    message = update.effective_message if update else None
+    if message:
+        await message.reply_text("Диалог истёк. Отправьте /start, чтобы начать верификацию заново.")
     return ConversationHandler.END
 
 
@@ -487,8 +559,18 @@ async def build_application() -> Application:
         ],
         states={
             ASK_NICK: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_nickname)],
+            CONFIRM_NICK: [
+                CallbackQueryHandler(
+                    confirm_nickname, pattern="^confirm_nick_(yes|no)$"
+                )
+            ],
+            ConversationHandler.TIMEOUT: [
+                MessageHandler(filters.ALL, verification_timeout),
+                CallbackQueryHandler(verification_timeout),
+            ],
         },
         fallbacks=[CommandHandler("start", start)],
+        conversation_timeout=VERIFICATION_CONVERSATION_TIMEOUT,
     )
 
     application.add_handler(conv)
