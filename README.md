@@ -47,6 +47,10 @@
 
 6\. Upon success, link `telegram\_user\_id ↔ roblox\_player\_id` in `users` table.
 
+### Roblox API rate limits & retries
+
+Roblox's public `users.roblox.com` endpoints throttle clients that perform more than ~60 requests per minute from the same IP and respond with HTTP 429. The bot helper wraps every lookup in an exponential backoff (0.5s → 1s → 2s) and retries up to three times on transport errors or 429 responses. Operators should avoid triggering repeated verification checks in quick succession; when Roblox stays unavailable the bot surfaces a "try again later" prompt to the user.
+
 
 
 \## 4. Data Synchronisation \& Reliability

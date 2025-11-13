@@ -39,6 +39,12 @@ from .models import (
     VerificationStatus,
 )
 from .services.purchases import create_purchase_request
+from .services.roblox import (
+    RobloxProfileNotFound,
+    RobloxServiceError,
+    contains_verification_code,
+    fetch_profile_by_nickname,
+)
 from .services.queue import enqueue_event
 from .services.security import (
     approve_admin_token,
@@ -57,6 +63,7 @@ settings = get_settings()
 ASK_NICK, CONFIRM_NICK = range(2)
 
 VERIFICATION_CONVERSATION_TIMEOUT = 120
+VERIFICATION_CHECK_CALLBACK = "verification_check"
 
 MENU_VERIFICATION = "Верификация"
 MENU_SHOP = "Магазин"
@@ -268,10 +275,14 @@ async def _issue_verification_code(
         await session.commit()
     context.user_data["verification_code"] = code
     context.user_data["is_verified"] = False
+    keyboard = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("Проверить", callback_data=VERIFICATION_CHECK_CALLBACK)]]
+    )
     await message.reply_text(
-        "Добавьте этот код в описание своего Roblox-профиля в течение 10 минут и дождитесь подтверждения: "
+        "Добавьте этот код в описание своего Roblox-профиля в течение 10 минут и нажмите \"Проверить\", когда будете готовы: "
         f"`{code}`",
         parse_mode="Markdown",
+        reply_markup=keyboard,
     )
 
 
@@ -344,6 +355,85 @@ async def verification_timeout(update: Update, context: ContextTypes.DEFAULT_TYP
     if message:
         await message.reply_text("Диалог истёк. Отправьте /start, чтобы начать верификацию заново.")
     return ConversationHandler.END
+
+
+async def check_verification_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    user = update.effective_user
+    message = query.message if query else update.effective_message
+    if not query or not user or not message:
+        return
+
+    await query.answer()
+
+    async with session_scope() as session:
+        verification = await session.scalar(
+            select(Verification)
+            .where(
+                Verification.telegram_id == user.id,
+                Verification.status == VerificationStatus.pending,
+            )
+            .order_by(Verification.created_at.desc())
+        )
+        if not verification:
+            await message.reply_text(
+                "Активных запросов на верификацию не найдено. Отправьте /start, чтобы получить новый код."
+            )
+            return
+
+        if verification.expires_at < datetime.utcnow():
+            verification.status = VerificationStatus.expired
+            await session.commit()
+            await message.reply_text(
+                "Этот код уже истёк. Запросите новый через /start и попробуйте снова."
+            )
+            return
+
+        try:
+            profile = await fetch_profile_by_nickname(verification.roblox_nick)
+        except RobloxProfileNotFound:
+            await message.reply_text(
+                "Не удалось найти Roblox-профиль с таким ником. Проверьте написание ника и запросите новый код."
+            )
+            return
+        except RobloxServiceError:
+            await message.reply_text(
+                "Не получилось связаться с Roblox. Попробуйте ещё раз через минуту."
+            )
+            return
+
+        combined_text = " ".join(
+            part for part in (profile.description, profile.status) if part
+        )
+        if contains_verification_code(combined_text, verification.code):
+            verification.status = VerificationStatus.used
+            verification.expires_at = datetime.utcnow()
+            user_record = await session.scalar(
+                select(User).where(User.telegram_id == verification.telegram_id)
+            )
+            if not user_record:
+                user_record = User(
+                    telegram_id=verification.telegram_id,
+                    roblox_id=profile.user_id,
+                    verified_at=datetime.utcnow(),
+                )
+                session.add(user_record)
+            else:
+                user_record.roblox_id = profile.user_id
+                user_record.verified_at = datetime.utcnow()
+            await session.commit()
+            context.user_data["is_verified"] = True
+            await message.reply_text(
+                "Код найден! Верификация завершена.",
+                reply_markup=build_main_keyboard(
+                    True, context.user_data.get("admin_verified", False)
+                ),
+            )
+            return
+
+        await message.reply_text(
+            "Код пока не найден в описании/статусе. Убедитесь, что вы сохранили профиль и попробуйте ещё раз."
+        )
 
 
 async def admin_login(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -574,6 +664,11 @@ async def build_application() -> Application:
     )
 
     application.add_handler(conv)
+    application.add_handler(
+        CallbackQueryHandler(
+            check_verification_status, pattern=f"^{VERIFICATION_CHECK_CALLBACK}$"
+        )
+    )
     application.add_handler(CommandHandler("admin_login", admin_login))
     application.add_handler(CommandHandler("admin_init", admin_init))
     application.add_handler(CommandHandler("admin_menu", admin_menu))
