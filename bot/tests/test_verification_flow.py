@@ -15,7 +15,8 @@ os.environ.setdefault("HMAC_SECRET", "secret")
 os.environ.setdefault("ADMIN_INITIAL_TOKEN", "init")
 
 from bot.db import configure_engine, init_db, session_scope  # noqa: E402
-from bot.main import start, start_verification  # noqa: E402
+from bot.main import start  # noqa: E402
+from bot.verification.handlers import start_verification  # noqa: E402
 from bot.models import User  # noqa: E402
 
 

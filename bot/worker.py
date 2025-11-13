@@ -7,9 +7,10 @@ from datetime import datetime
 from sqlalchemy import select
 
 from .db import session_scope
-from .models import EventQueue, PurchaseStatus, User, Verification, VerificationStatus
+from .models import EventQueue, PurchaseStatus
 from .services.purchases import confirm_purchase
 from .services.queue import dequeue_event
+from .verification import service as verification_service
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -28,27 +29,8 @@ async def mark_event_processed(event_id: str) -> None:
 async def handle_verification(payload: dict) -> None:
     code = payload["code"]
     player_id = payload["playerId"]
-    async with session_scope() as session:
-        verification = await session.scalar(
-            select(Verification).where(Verification.code == code, Verification.status == VerificationStatus.pending)
-        )
-        if not verification:
-            await session.commit()
-            return
-        if verification.expires_at < datetime.utcnow():
-            verification.status = VerificationStatus.expired
-            await session.commit()
-            return
-        verification.status = VerificationStatus.used
-        verification.expires_at = datetime.utcnow()
-        user = await session.scalar(select(User).where(User.telegram_id == verification.telegram_id))
-        if not user:
-            user = User(telegram_id=verification.telegram_id, roblox_id=player_id, verified_at=datetime.utcnow())
-            session.add(user)
-        else:
-            user.roblox_id = player_id
-            user.verified_at = datetime.utcnow()
-        await session.commit()
+    username = payload.get("username")
+    await verification_service.process_backend_confirmation(username, code, player_id)
 
 
 async def handle_purchase(event: dict) -> None:

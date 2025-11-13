@@ -1,12 +1,8 @@
-from __future__ import annotations
-
 import hashlib
 import hmac
 import json
 import os
 import sys
-import types
-from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -26,89 +22,33 @@ os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
 os.environ.setdefault("HMAC_SECRET", "secret")
 os.environ.setdefault("ADMIN_INITIAL_TOKEN", "init")
 
-EVENT_STORE: dict[str, object] = {}
-
-
-class FakeSession:
-    def __init__(self) -> None:
-        self._pending = []
-
-    def add(self, entry) -> None:
-        self._pending.append(entry)
-
-    async def commit(self) -> None:
-        for entry in self._pending:
-            EVENT_STORE[getattr(entry, "event_id", id(entry))] = entry
-        self._pending.clear()
-
-    async def rollback(self) -> None:
-        self._pending.clear()
-
-    async def close(self) -> None:
-        pass
-
-
-@asynccontextmanager
-async def fake_session_scope():
-    session = FakeSession()
-    try:
-        yield session
-    finally:
-        await session.close()
-
-
-async def fake_init_db() -> None:
-    return None
-
-
-def fake_configure_engine(db_url: str | None = None) -> None:
-    return None
-
-
-fake_db_module = types.ModuleType("bot.db")
-fake_db_module.session_scope = fake_session_scope
-fake_db_module.init_db = fake_init_db
-fake_db_module.configure_engine = fake_configure_engine
-sys.modules["bot.db"] = fake_db_module
-
 from bot.api.webhook import app  # noqa: E402
 from bot.config import get_settings  # noqa: E402
-
-
-@pytest.fixture(autouse=True)
-def clear_store():
-    EVENT_STORE.clear()
+from bot.verification.service import (  # noqa: E402
+    VerificationCheckResult,
+    VerificationStatusResult,
+)
 
 
 class StubApplication:
     def __init__(self) -> None:
         self.bot = object()
-        self.processed_updates = []
-        self.initialized = False
-        self.started = False
-        self.stopped = False
-        self.shut_down = False
+        self.processed_updates: list[object] = []
 
     async def initialize(self) -> None:
-        self.initialized = True
+        return None
 
     async def start(self) -> None:
-        self.started = True
+        return None
 
     async def stop(self) -> None:
-        self.stopped = True
+        return None
 
     async def shutdown(self) -> None:
-        self.shut_down = True
+        return None
 
     async def process_update(self, update) -> None:
         self.processed_updates.append(update)
-
-
-class StubEventQueue:
-    def __init__(self, event_id: str, payload: str) -> None:
-        self.event_id = event_id
-        self.payload = payload
 
 
 @pytest.fixture
@@ -118,8 +58,11 @@ def client_and_stub(monkeypatch):
     async def fake_build_application():
         return stub
 
+    async def fake_init_db():
+        return None
+
     monkeypatch.setattr("bot.api.webhook.build_application", fake_build_application)
-    monkeypatch.setattr("bot.api.webhook.EventQueue", StubEventQueue)
+    monkeypatch.setattr("bot.api.webhook.init_db", fake_init_db)
 
     class DummyUpdate:
         @classmethod
@@ -132,26 +75,75 @@ def client_and_stub(monkeypatch):
         yield client, stub
 
 
-def test_verify_callback(monkeypatch, client_and_stub):
-    client, _ = client_and_stub
-    captured = {}
-
-    async def fake_enqueue(event):
-        captured["event"] = event
-
-    monkeypatch.setattr("bot.api.webhook.enqueue_event", fake_enqueue)
-
-    payload = {"eventId": "evt-1", "playerId": 1, "code": "BB-123", "ts": "2024-01-01T00:00:00Z"}
+def _signature_for(payload: dict) -> str:
     body = json.dumps(payload, separators=(",", ":")).encode()
-    signature = hmac.new(get_settings().hmac_secret.encode(), body, hashlib.sha256).hexdigest()
+    secret = get_settings().hmac_secret.encode()
+    return hmac.new(secret, body, hashlib.sha256).hexdigest()
 
-    response = client.post("/api/verify-callback", json=payload, headers={"X-Signature": signature})
+
+def test_verification_check_endpoint(monkeypatch, client_and_stub):
+    client, _ = client_and_stub
+
+    async def fake_process(username, code, player_id):
+        assert username == "PlayerOne"
+        assert code == "BB-999"
+        assert player_id == 777
+        return VerificationCheckResult(status="verified", username="PlayerOne", telegram_id=1)
+
+    monkeypatch.setattr(
+        "bot.api.verification.verification_service.process_backend_confirmation",
+        fake_process,
+    )
+
+    payload = {"username": "PlayerOne", "playerId": 777, "code": "BB-999"}
+    signature = _signature_for(payload)
+
+    response = client.post(
+        "/bot/verification/check",
+        json=payload,
+        headers={"X-Signature": signature},
+    )
+
     assert response.status_code == 200
-    assert response.json()["status"] == "в_очереди"
-    assert captured["event"]["type"] == "verification"
+    assert response.json() == {"status": "verified", "username": "PlayerOne"}
 
-    assert "evt-1" in EVENT_STORE
-    assert isinstance(EVENT_STORE["evt-1"], StubEventQueue)
+
+def test_verification_status_endpoint(monkeypatch, client_and_stub):
+    client, _ = client_and_stub
+
+    async def fake_status(username):
+        assert username == "PlayerTwo"
+        return VerificationStatusResult(status="pending", username="PlayerTwo")
+
+    monkeypatch.setattr(
+        "bot.api.verification.verification_service.fetch_status_for_username",
+        fake_status,
+    )
+
+    payload = {"username": "PlayerTwo", "playerId": 888}
+    signature = _signature_for(payload)
+
+    response = client.post(
+        "/bot/verification/status",
+        json=payload,
+        headers={"X-Signature": signature},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "pending", "username": "PlayerTwo"}
+
+
+def test_verification_rejects_bad_signature(client_and_stub):
+    client, _ = client_and_stub
+    payload = {"username": "Bad", "playerId": 1, "code": "NOPE"}
+
+    response = client.post(
+        "/bot/verification/check",
+        json=payload,
+        headers={"X-Signature": "invalid"},
+    )
+
+    assert response.status_code == 401
 
 
 def test_telegram_webhook(client_and_stub):
