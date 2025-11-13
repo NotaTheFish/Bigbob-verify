@@ -60,7 +60,7 @@ logger = logging.getLogger(__name__)
 
 settings = get_settings()
 
-ASK_NICK, CONFIRM_NICK = range(2)
+ASK_NICK, CONFIRM_NICK, CHECK_CODE = range(3)
 
 VERIFICATION_CONVERSATION_TIMEOUT = 120
 VERIFICATION_CHECK_CALLBACK = "verification_check"
@@ -376,7 +376,7 @@ async def confirm_nickname(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await query.edit_message_reply_markup(reply_markup=None)
         await _issue_verification_code(update, context, nickname)
         _clear_pending_nickname(context)
-        return ConversationHandler.END
+        return CHECK_CODE
 
     if data == "confirm_nick_no":
         _clear_pending_nickname(context)
@@ -396,12 +396,12 @@ async def verification_timeout(update: Update, context: ContextTypes.DEFAULT_TYP
     return ConversationHandler.END
 
 
-async def check_verification_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def check_verification_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     user = update.effective_user
     message = query.message if query else update.effective_message
     if not query or not user or not message:
-        return
+        return ConversationHandler.END
 
     await query.answer()
 
@@ -418,7 +418,7 @@ async def check_verification_status(update: Update, context: ContextTypes.DEFAUL
             await message.reply_text(
                 "Активных запросов на верификацию не найдено. Отправьте /start, чтобы получить новый код."
             )
-            return
+            return ConversationHandler.END
 
         if verification.expires_at < datetime.utcnow():
             verification.status = VerificationStatus.expired
@@ -426,7 +426,7 @@ async def check_verification_status(update: Update, context: ContextTypes.DEFAUL
             await message.reply_text(
                 "Этот код уже истёк. Запросите новый через /start и попробуйте снова."
             )
-            return
+            return ConversationHandler.END
 
         try:
             profile = await fetch_profile_by_nickname(verification.roblox_nick)
@@ -434,12 +434,12 @@ async def check_verification_status(update: Update, context: ContextTypes.DEFAUL
             await message.reply_text(
                 "Не удалось найти Roblox-профиль с таким ником. Проверьте написание ника и запросите новый код."
             )
-            return
+            return CHECK_CODE
         except RobloxServiceError:
             await message.reply_text(
                 "Не получилось связаться с Roblox. Попробуйте ещё раз через минуту."
             )
-            return
+            return CHECK_CODE
 
         combined_text = " ".join(
             part for part in (profile.description, profile.status) if part
@@ -468,11 +468,12 @@ async def check_verification_status(update: Update, context: ContextTypes.DEFAUL
                     True, context.user_data.get("admin_verified", False)
                 ),
             )
-            return
+            return ConversationHandler.END
 
         await message.reply_text(
             "Код пока не найден в описании/статусе. Убедитесь, что вы сохранили профиль и попробуйте ещё раз."
         )
+        return CHECK_CODE
 
 
 async def admin_login(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -693,6 +694,12 @@ async def build_application() -> Application:
                     confirm_nickname, pattern="^confirm_nick_(yes|no)$"
                 )
             ],
+            CHECK_CODE: [
+                CallbackQueryHandler(
+                    check_verification_status,
+                    pattern=f"^{VERIFICATION_CHECK_CALLBACK}$",
+                )
+            ],
             ConversationHandler.TIMEOUT: [
                 MessageHandler(filters.ALL, verification_timeout),
                 CallbackQueryHandler(verification_timeout),
@@ -705,11 +712,6 @@ async def build_application() -> Application:
     application.add_handler(CommandHandler("start", start))
     application.add_handler(conv)
     application.add_handler(CommandHandler("cancel", cancel_verification))
-    application.add_handler(
-        CallbackQueryHandler(
-            check_verification_status, pattern=f"^{VERIFICATION_CHECK_CALLBACK}$"
-        )
-    )
     application.add_handler(CommandHandler("admin_login", admin_login))
     application.add_handler(CommandHandler("admin_init", admin_init))
     application.add_handler(CommandHandler("admin_menu", admin_menu))
