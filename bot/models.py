@@ -4,7 +4,15 @@ import enum
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import BigInteger, DateTime, Enum as SAEnum, ForeignKey, String, UniqueConstraint
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    DateTime,
+    Enum as SAEnum,
+    ForeignKey,
+    String,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -44,6 +52,9 @@ class User(Base):
     roblox_id: Mapped[Optional[int]] = mapped_column(index=True, unique=True, nullable=True)
     username: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     verified_at: Mapped[Optional[datetime]] = mapped_column(DateTime(), nullable=True)
+    is_banned: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    banned_at: Mapped[Optional[datetime]] = mapped_column(DateTime(), nullable=True)
+    ban_reason: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     invited_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(), default=datetime.utcnow, nullable=False)
     last_active: Mapped[datetime] = mapped_column(DateTime(), default=datetime.utcnow, nullable=False)

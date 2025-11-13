@@ -86,10 +86,47 @@ def build_main_keyboard(verified: bool, is_admin: bool) -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(buttons, resize_keyboard=True, one_time_keyboard=False)
 
 
-async def _load_user(telegram_id: int) -> tuple[bool, User | None]:
+async def _load_user(telegram_id: int) -> tuple[bool, bool, User | None]:
     async with session_scope() as session:
         user = await session.scalar(select(User).where(User.telegram_id == telegram_id))
-    return bool(user and user.verified_at), user
+    is_verified = bool(user and user.verified_at)
+    is_banned = bool(user and user.is_banned)
+    return is_verified, is_banned, user
+
+
+def _cache_user_state(
+    context: ContextTypes.DEFAULT_TYPE, verified: bool, is_banned: bool, user: User | None
+) -> None:
+    context.user_data["is_verified"] = verified
+    context.user_data["is_banned"] = is_banned
+    context.user_data["ban_reason"] = user.ban_reason if user and user.ban_reason else None
+
+
+async def _ensure_user_state(
+    context: ContextTypes.DEFAULT_TYPE, telegram_id: int
+) -> tuple[bool, bool, str | None]:
+    verified = context.user_data.get("is_verified")
+    is_banned = context.user_data.get("is_banned")
+    ban_reason = context.user_data.get("ban_reason")
+    if verified is None or is_banned is None:
+        verified, is_banned, user = await _load_user(telegram_id)
+        _cache_user_state(context, verified, is_banned, user)
+        ban_reason = context.user_data.get("ban_reason")
+    return bool(verified), bool(is_banned), ban_reason
+
+
+def _ban_notice_text(reason: str | None) -> str:
+    text = (
+        "Ваш доступ к Bigbob ограничен. Вы не можете пользоваться ботом, пока блокировка не будет снята."
+    )
+    if reason:
+        text += f"\nПричина: {reason}"
+    text += "\nЕсли считаете блокировку ошибочной, напишите в поддержку @BigbobSupport."
+    return text
+
+
+async def _send_ban_notice(message, reason: str | None) -> None:
+    await message.reply_text(_ban_notice_text(reason), reply_markup=ReplyKeyboardRemove())
 
 
 def _verification_instruction() -> str:
@@ -106,9 +143,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not message or not user:
         return ConversationHandler.END
 
-    verified, _ = await _load_user(user.id)
-    context.user_data["is_verified"] = verified
+    verified, is_banned, user_record = await _load_user(user.id)
+    _cache_user_state(context, verified, is_banned, user_record)
     is_admin = context.user_data.get("admin_verified", False)
+
+    if is_banned:
+        await _send_ban_notice(message, context.user_data.get("ban_reason"))
+        return ConversationHandler.END
 
     if verified:
         await message.reply_text(
@@ -130,10 +171,11 @@ async def start_verification(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not message or not user:
         return ConversationHandler.END
 
-    verified = context.user_data.get("is_verified")
-    if verified is None:
-        verified, _ = await _load_user(user.id)
-        context.user_data["is_verified"] = verified
+    verified, is_banned, ban_reason = await _ensure_user_state(context, user.id)
+
+    if is_banned:
+        await _send_ban_notice(message, ban_reason)
+        return ConversationHandler.END
 
     if verified:
         await message.reply_text(
@@ -159,9 +201,14 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
     selection = message.text.strip()
     user = update.effective_user
     verified = context.user_data.get("is_verified")
-    if verified is None and user:
-        verified, _ = await _load_user(user.id)
-        context.user_data["is_verified"] = verified
+    is_banned = context.user_data.get("is_banned")
+    ban_reason = context.user_data.get("ban_reason")
+    if user and (verified is None or is_banned is None):
+        verified, is_banned, ban_reason = await _ensure_user_state(context, user.id)
+
+    if is_banned:
+        await _send_ban_notice(message, ban_reason)
+        return
 
     if selection == MENU_SHOP:
         await message.reply_text("Магазин пока в разработке. Используйте /start для возврата.")
@@ -181,7 +228,22 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def ask_nickname(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    nickname = update.message.text.strip()
+    message = update.message
+    user = update.effective_user
+    if not message or not user or not message.text:
+        return ConversationHandler.END
+
+    verified = context.user_data.get("is_verified")
+    is_banned = context.user_data.get("is_banned")
+    ban_reason = context.user_data.get("ban_reason")
+    if verified is None or is_banned is None:
+        verified, is_banned, ban_reason = await _ensure_user_state(context, user.id)
+
+    if is_banned:
+        await _send_ban_notice(message, ban_reason)
+        return ConversationHandler.END
+
+    nickname = message.text.strip()
     code = f"BB-{secrets.token_hex(3)}"
     expires_at = datetime.utcnow() + timedelta(seconds=settings.verification_code_ttl_seconds)
     async with session_scope() as session:
@@ -204,7 +266,7 @@ async def ask_nickname(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         await session.commit()
     context.user_data["verification_code"] = code
     context.user_data["is_verified"] = False
-    await update.message.reply_text(
+    await message.reply_text(
         "Добавьте этот код в описание своего Roblox-профиля в течение 10 минут и дождитесь подтверждения: "
         f"`{code}`",
         parse_mode="Markdown",
