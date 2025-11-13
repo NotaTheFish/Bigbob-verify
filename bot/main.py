@@ -256,23 +256,33 @@ async def _issue_verification_code(
     code = f"BB-{secrets.token_hex(3)}"
     expires_at = datetime.utcnow() + timedelta(seconds=settings.verification_code_ttl_seconds)
     async with session_scope() as session:
-        await session.execute(
-            sa_update(Verification)
-            .where(
-                Verification.telegram_id == user.id,
-                Verification.status == VerificationStatus.pending,
+        async with session.begin():
+            expire_stmt = (
+                sa_update(Verification)
+                .where(
+                    Verification.telegram_id == user.id,
+                    Verification.status == VerificationStatus.pending,
+                )
+                .values(status=VerificationStatus.expired)
+                .execution_options(synchronize_session=False)
             )
-            .values(status=VerificationStatus.expired)
-        )
-        verification = Verification(
-            telegram_id=user.id,
-            roblox_nick=nickname,
-            code=code,
-            status=VerificationStatus.pending,
-            expires_at=expires_at,
-        )
-        session.add(verification)
-        await session.commit()
+            expire_result = await session.execute(expire_stmt)
+            expired_rows = expire_result.rowcount or 0
+            if expired_rows > 1:
+                logger.warning(
+                    "Expired multiple pending verifications for telegram_id=%s: %s",
+                    user.id,
+                    expired_rows,
+                )
+
+            verification = Verification(
+                telegram_id=user.id,
+                roblox_nick=nickname,
+                code=code,
+                status=VerificationStatus.pending,
+                expires_at=expires_at,
+            )
+            session.add(verification)
     context.user_data["verification_code"] = code
     context.user_data["is_verified"] = False
     keyboard = InlineKeyboardMarkup(

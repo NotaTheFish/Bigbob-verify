@@ -76,3 +76,61 @@ async def test_verification_flow_supports_large_telegram_ids(tmp_path) -> None:
         assert stored_user is not None
         assert stored_user.telegram_id == large_telegram_id
         assert stored_user.roblox_id == roblox_player_id
+
+
+@pytest.mark.asyncio
+async def test_verification_history_preserved_for_multiple_attempts(tmp_path) -> None:
+    db_url = f"sqlite+aiosqlite:///{tmp_path/'verification-history.db'}"
+    os.environ["DB_URL"] = db_url
+    configure_engine(db_url)
+    await init_db()
+
+    telegram_id = 7_777
+    now = datetime.utcnow()
+
+    async with session_scope() as session:
+        first = Verification(
+            telegram_id=telegram_id,
+            roblox_nick="PlayerOne",
+            code="HIST-1",
+            status=VerificationStatus.pending,
+            expires_at=now + timedelta(minutes=5),
+            created_at=now,
+        )
+        session.add(first)
+        await session.commit()
+        first_id = first.id
+
+    async with session_scope() as session:
+        stored_first = await session.get(Verification, first_id)
+        assert stored_first is not None
+        stored_first.status = VerificationStatus.expired
+        await session.commit()
+
+    async with session_scope() as session:
+        second = Verification(
+            telegram_id=telegram_id,
+            roblox_nick="PlayerOne",
+            code="HIST-2",
+            status=VerificationStatus.pending,
+            expires_at=now + timedelta(minutes=10),
+            created_at=now + timedelta(minutes=1),
+        )
+        session.add(second)
+        await session.commit()
+        second_id = second.id
+
+    async with session_scope() as session:
+        stored_second = await session.get(Verification, second_id)
+        assert stored_second is not None
+        stored_second.status = VerificationStatus.expired
+        await session.commit()
+
+    async with session_scope() as session:
+        result = await session.execute(
+            select(Verification).where(Verification.telegram_id == telegram_id)
+        )
+        history = result.scalars().all()
+
+    assert len(history) == 2
+    assert all(entry.status == VerificationStatus.expired for entry in history)

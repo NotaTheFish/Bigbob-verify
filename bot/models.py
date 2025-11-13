@@ -4,15 +4,7 @@ import enum
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import (
-    BigInteger,
-    Boolean,
-    DateTime,
-    Enum as SAEnum,
-    ForeignKey,
-    String,
-    UniqueConstraint,
-)
+from sqlalchemy import BigInteger, Boolean, DateTime, Enum as SAEnum, ForeignKey, Index, String
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -74,7 +66,6 @@ class Balance(Base):
 
 class Verification(Base):
     __tablename__ = "verifications"
-    __table_args__ = (UniqueConstraint("telegram_id", "status", name="uq_verification_active"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     telegram_id: Mapped[int] = mapped_column(BigInteger, index=True, nullable=False)
@@ -83,6 +74,14 @@ class Verification(Base):
     status: Mapped[VerificationStatus] = mapped_column(SAEnum(VerificationStatus), default=VerificationStatus.pending)
     expires_at: Mapped[datetime] = mapped_column(DateTime(), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(), default=datetime.utcnow, nullable=False)
+
+
+Index(
+    "uq_verification_active",
+    Verification.telegram_id,
+    unique=True,
+    postgresql_where=(Verification.status == VerificationStatus.pending),
+)
 
 
 class Referral(Base):
