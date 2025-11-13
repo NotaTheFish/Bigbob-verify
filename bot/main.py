@@ -686,6 +686,7 @@ async def build_application() -> Application:
             CommandHandler("verify", start_verification),
             MessageHandler(filters.Regex(f"^{MENU_VERIFICATION}$"), start_verification),
         ],
+        per_message=True,
         states={
             ASK_NICK: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_nickname)],
             CONFIRM_NICK: [
