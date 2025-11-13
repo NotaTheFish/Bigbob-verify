@@ -4,7 +4,7 @@ import enum
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import DateTime, Enum as SAEnum, ForeignKey, String, UniqueConstraint
+from sqlalchemy import BigInteger, DateTime, Enum as SAEnum, ForeignKey, String, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -40,7 +40,7 @@ class User(Base):
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    telegram_id: Mapped[int] = mapped_column(index=True, unique=True)
+    telegram_id: Mapped[int] = mapped_column(BigInteger, index=True, unique=True, nullable=False)
     roblox_id: Mapped[Optional[int]] = mapped_column(index=True, unique=True, nullable=True)
     username: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     verified_at: Mapped[Optional[datetime]] = mapped_column(DateTime(), nullable=True)
