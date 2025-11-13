@@ -112,6 +112,7 @@ def _cache_user_state(
     context.user_data["is_verified"] = verified
     context.user_data["is_banned"] = is_banned
     context.user_data["ban_reason"] = user.ban_reason if user and user.ban_reason else None
+    context.user_data["_user_state_cached_at"] = datetime.utcnow()
 
 
 def _clear_pending_nickname(context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -119,12 +120,14 @@ def _clear_pending_nickname(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def _ensure_user_state(
-    context: ContextTypes.DEFAULT_TYPE, telegram_id: int
+    context: ContextTypes.DEFAULT_TYPE,
+    telegram_id: int,
+    force_refresh: bool = False,
 ) -> tuple[bool, bool, str | None]:
     verified = context.user_data.get("is_verified")
     is_banned = context.user_data.get("is_banned")
     ban_reason = context.user_data.get("ban_reason")
-    if verified is None or is_banned is None:
+    if force_refresh or verified is None or is_banned is None:
         verified, is_banned, user = await _load_user(telegram_id)
         _cache_user_state(context, verified, is_banned, user)
         ban_reason = context.user_data.get("ban_reason")
@@ -189,7 +192,9 @@ async def start_verification(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return ConversationHandler.END
 
     _clear_pending_nickname(context)
-    verified, is_banned, ban_reason = await _ensure_user_state(context, user.id)
+    verified, is_banned, ban_reason = await _ensure_user_state(
+        context, user.id, force_refresh=True
+    )
 
     if is_banned:
         await _send_ban_notice(message, ban_reason)
@@ -315,11 +320,9 @@ async def ask_nickname(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     if not message or not user or not message.text:
         return ConversationHandler.END
 
-    verified = context.user_data.get("is_verified")
-    is_banned = context.user_data.get("is_banned")
-    ban_reason = context.user_data.get("ban_reason")
-    if verified is None or is_banned is None:
-        verified, is_banned, ban_reason = await _ensure_user_state(context, user.id)
+    verified, is_banned, ban_reason = await _ensure_user_state(
+        context, user.id, force_refresh=True
+    )
 
     if is_banned:
         await _send_ban_notice(message, ban_reason)
@@ -345,7 +348,8 @@ async def ask_nickname(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
 
 async def confirm_nickname(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
-    if not query:
+    user = update.effective_user
+    if not query or not user:
         return ConversationHandler.END
 
     await query.answer()
@@ -357,6 +361,18 @@ async def confirm_nickname(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 "Не удалось определить ник. Пожалуйста, отправьте его ещё раз."
             )
             return ASK_NICK
+        verified, is_banned, ban_reason = await _ensure_user_state(
+            context, user.id, force_refresh=True
+        )
+        if is_banned:
+            if query.message:
+                await _send_ban_notice(query.message, ban_reason)
+            _clear_pending_nickname(context)
+            return ConversationHandler.END
+        if verified:
+            await query.edit_message_text("Вы уже прошли верификацию.")
+            _clear_pending_nickname(context)
+            return ConversationHandler.END
         await query.edit_message_reply_markup(reply_markup=None)
         await _issue_verification_code(update, context, nickname)
         _clear_pending_nickname(context)
