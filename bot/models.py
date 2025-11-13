@@ -128,7 +128,7 @@ class Admin(Base):
     __tablename__ = "admins"
 
     admin_id: Mapped[int] = mapped_column(primary_key=True)
-    telegram_id: Mapped[int] = mapped_column(unique=True, nullable=False)
+    telegram_id: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=False)
     role: Mapped[AdminRole] = mapped_column(SAEnum(AdminRole), nullable=False)
     granted_by: Mapped[Optional[int]] = mapped_column(ForeignKey("admins.admin_id"), nullable=True)
     granted_at: Mapped[datetime] = mapped_column(DateTime(), default=datetime.utcnow)
